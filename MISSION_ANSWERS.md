@@ -99,7 +99,33 @@ Client ──▶ Nginx (:80 / :443, reverse proxy + rate limit 10r/s)
 
 ## Part 3: Cloud Deployment
 
-*(Thực hiện ở CP6 sau khi hoàn thành Part 6)*
+### Exercise 3.1 / 3.2: Deploy agent Part 6 (`06-lab-complete/`) lên Render
+
+- **Platform:** Render (Web Service runtime `Docker`, Root Directory `06-lab-complete`, Region `Singapore`, kết nối Render Key Value / Redis cùng Region qua `REDIS_URL`).
+- **Public URL:** https://k5-l3b-day14-caophamtankhai-2a202603883.onrender.com
+- **Screenshots:**
+  - [Deployment dashboard](screenshots/dashboard.png)
+  - [Service running](screenshots/running.png)
+  - [Test results](screenshots/test.png)
+- Chi tiết lệnh kiểm tra và danh sách biến môi trường xem trong [DEPLOYMENT.md](DEPLOYMENT.md).
+
+### So sánh `railway.toml` và `render.yaml`
+
+| Tiêu chí | `railway.toml` | `render.yaml` (Blueprint) |
+|---|---|---|
+| **Định dạng & phạm vi** | File TOML cấu hình **một service** (cách build, healthcheck, restart policy). | File YAML theo hướng **Infrastructure as Code (IaC)**: khai báo **nhiều service** cùng lúc (web service, Redis/DB, env vars, liên kết `fromService`). |
+| **Cách khai báo build** | `[build]` với `builder = "DOCKERFILE"` (hoặc `NIXPACKS`) và `dockerfilePath`. | `runtime: docker` (hoặc `python` kèm `buildCommand` / `startCommand`). |
+| **Health check** | `[deploy] healthcheckPath = "/health"` kèm `healthcheckTimeout`, `restartPolicyType`. | `healthCheckPath: /health` ngay trong cấu hình service. |
+| **Quản lý biến môi trường & secret** | Thường đặt riêng qua CLI (`railway variables set`) hoặc Dashboard, không khai báo trong `railway.toml`. | Khai báo trực tiếp trong mục `envVars`: secret dùng `generateValue: true` hoặc `sync: false` để không hardcode giá trị vào Git. |
+| **Vì sao khác nhau** | Railway ưu tiên trải nghiệm triển khai nhanh từng service qua CLI/Dashboard. | Render Blueprint hướng tới tái lập toàn bộ kiến trúc nhiều service từ 1 file duy nhất trong Git. |
+
+### Exercise 3.3: Mô tả CI/CD Pipeline của GCP Cloud Run (`03-cloud-deployment/production-cloud-run/`)
+
+Dựa trên `cloudbuild.yaml` và `service.yaml`, pipeline CI/CD tự động kích hoạt khi push lên nhánh `main` và đi qua **4 bước tuần tự** (`waitFor`):
+1. **`test`:** Dùng image `python:3.11-slim` cài `requirements.txt` + `pytest` và chạy `pytest tests/`; nếu test fail thì dừng pipeline ngay.
+2. **`build`:** Build Docker image gắn 2 tag (`$COMMIT_SHA` và `latest`), tái sử dụng layer cache từ image `latest` (`--cache-from`).
+3. **`push`:** Đẩy toàn bộ tag image lên Container Registry (`gcr.io/$PROJECT_ID/ai-agent`).
+4. **`deploy`:** Chạy `gcloud run deploy` triển khai image `$COMMIT_SHA` lên Cloud Run (`asia-southeast1`), cấu hình tài nguyên (`512Mi`, `1 CPU`, `min-instances=1` để tránh cold start, `max-instances=10`, concurrency 80 trong `service.yaml`), đọc secret từ **Secret Manager** (`--set-secrets` / `secretKeyRef`) và kiểm tra bằng `livenessProbe` (`/health`) + `startupProbe` (`/ready`).
 
 ---
 
@@ -224,7 +250,28 @@ Total messages: 10
 
 ## Part 6: Final Project — `check_production_ready.py` Output
 
-*(Dán phần "📋 Checklist Deliverable" sau khi đạt `PASS 12/12` ở CP5)*
+Chạy chế độ đầy đủ (`python check_production_ready.py`, có Docker và POSIX `SIGTERM` trong WSL2) trong `06-lab-complete/`:
+
+```text
+================================================================
+  📋 Checklist Deliverable
+     ✅ Dockerfile (multi-stage, < 500 MB)
+     ✅ docker-compose.yml (agent + redis)
+     ✅ .dockerignore
+     ✅ Health check endpoint (GET /health)
+     ✅ Readiness endpoint (GET /ready)
+     ✅ API Key authentication
+     ✅ Rate limiting
+     ✅ Cost guard
+     ✅ Config từ environment variables
+     ✅ Structured logging
+     ✅ Graceful shutdown
+     ✅ Public URL ready (Railway / Render config)
+----------------------------------------------------------------
+  Result: 12/12 tiêu chí đạt · 43/43 checks passed
+  🎉 PASS 12/12 — PRODUCTION READY! Deploy nào!
+================================================================
+```
 
 ---
 
@@ -236,3 +283,6 @@ Total messages: 10
 | Day 14 | CP2 | Hỏi cách giải quyết lỗi build Docker (sai build context), lỗi Docker Hub 429 Too Many Requests khi `docker compose up --build`, và giải thích 4 câu hỏi Dockerfile | Hướng dẫn build từ gốc repo, dùng `docker tag` + `--no-build` tận dụng image đã build để tránh 429, và giải thích layer cache / multi-stage | Tự chạy build 2 image, tự đo `docker images my-agent` (1.67GB vs 240MB), tự khởi động stack 4 container và gọi `/health`, `/ask` qua Nginx. |
 | Day 14 | CP3 | Hỏi lệnh bật `.venv` và cách viết vòng lặp test rate limit trên PowerShell | Đường dẫn kích hoạt `.venv` và đoạn script PowerShell test 10 request + 429 | Tự chạy cả bản `develop` (API key: 401/200) và `production` (JWT + rate limit: 10×200 → 429), đối chiếu code `auth.py`, `rate_limiter.py`, `cost_guard.py`. |
 | Day 14 | CP4 | Xác nhận vị trí Part 3 theo lộ trình K5, hỏi về test script và hướng dẫn chạy stack scale 3 instance | Giải thích lộ trình đưa Part 3 sang CP6 và cụm lệnh chạy `docker compose -p k5-day14-scaling --scale agent=3` + `test_stateless.py` | Tự chạy stack 3 instance + Redis + Nginx, tự chạy `test_stateless.py` xác nhận 3 instance khác nhau chia tải nhưng vẫn giữ đủ 10 tin nhắn trong Redis. |
+| Day 14 | CP5 | Hoàn thiện các file TODO trong `06-lab-complete/` và xử lý lỗi WSL2 (`python3.14-venv`, Docker Desktop WSL Integration, quyền `docker.sock`, cài gói cho Python 3.14) | Triển khai đầy đủ 12 file trong `06-lab-complete/` theo hợp đồng và hướng dẫn khắc phục môi trường WSL2 + Docker | Tự chạy `python check_production_ready.py` chế độ đầy đủ trong WSL2 đạt **`PASS 12/12`**. |
+| Day 14 | CP6 | Hướng dẫn deploy `06-lab-complete/` kèm Redis lên Render, viết `DEPLOYMENT.md` và phần so sánh `railway.toml` vs `render.yaml`, mô tả Cloud Run CI/CD | Quy trình cấu hình Render Key Value + Web Service Docker, tạo `DEPLOYMENT.md` và hoàn thiện Part 3 | Tự tạo Key Value & Web Service trên Render, đặt env vars trên Dashboard, kiểm tra service `Live` và chạy 4 lệnh `curl` xác nhận `200 / 200 / 401 / 200`. |
+| Day 14 | CP7–CP8 | Xử lý lỗi `502 Bad Gateway` của `benchmark-observability/production/Dockerfile`, bổ sung 2 entry `KNOWLEDGE_BASE` và viết workflow CI `.github/workflows/eval.yml`, tổng hợp `BENCHMARK_REPORT.md` từ dữ liệu đo thật | Sửa thiếu `ENV PYTHONUSERBASE=/home/agent/.local` trong `Dockerfile`, thêm entry `hpa` và `jwt` vào `mock_llm.py`, hướng dẫn kích đồng thời 2 alert Prometheus | Tự chạy 7 bài load test + 3 bài eval (v2 đạt 23/23 = 100%, 0 regression), tự chạy Locust headless Scale 1 vs 3, tự chụp đủ 4 ảnh Grafana / Jaeger slow & error / Prometheus 2 alerts firing và đối chiếu khớp toàn bộ số liệu JSON/CSV. |
